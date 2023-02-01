@@ -1,0 +1,751 @@
+diff --git a/Xext/xf86bigfont.c b/Xext/xf86bigfont.c
+index 529595b..4a56ad0 100644
+--- a/Xext/xf86bigfont.c
++++ b/Xext/xf86bigfont.c
+@@ -716,7 +716,7 @@ XFree86BigfontExtensionInit(void)
+ 
+         FontShmdescIndex = xfont2_allocate_font_private_index();
+ 
+-#if !defined(CSRG_BASED) && !defined(__CYGWIN__)
++#if false
+         pagesize = SHMLBA;
+ #else
+ #ifdef _SC_PAGESIZE
+diff --git a/dix/stubmain.c b/dix/stubmain.c
+index 7efb4b8..2e2bf65 100644
+--- a/dix/stubmain.c
++++ b/dix/stubmain.c
+@@ -23,6 +23,7 @@ DEALINGS IN THE SOFTWARE.
+ 
+ ******************************************************************/
+ 
++extern const char *xf86LogFile;
+ int dix_main(int argc, char *argv[], char *envp[]);
+ 
+ /*
+@@ -31,5 +32,9 @@ int dix_main(int argc, char *argv[], char *envp[]);
+ int
+ main(int argc, char *argv[], char *envp[])
+ {
++#ifdef ANDROID
++	xf86LogFile = "/dev/null";
++#endif
++
+     return dix_main(argc, argv, envp);
+ }
+diff --git a/hw/xfree86/common/compiler.h b/hw/xfree86/common/compiler.h
+index 2b2008b..eb788d3 100644
+--- a/hw/xfree86/common/compiler.h
++++ b/hw/xfree86/common/compiler.h
+@@ -518,14 +518,10 @@ xf86WriteMmio32Le(__volatile__ void *base, const unsigned long offset,
+     barrier();
+ }
+ 
+-#elif defined(__mips__) || (defined(__arm32__) && !defined(__linux__))
+-#if defined(__arm32__) || defined(__mips64)
++#elif defined(__arm32__) && !defined(__linux__)
+ #define PORT_SIZE long
+-#else
+-#define PORT_SIZE short
+-#endif
+ 
+-_X_EXPORT unsigned int IOPortBase;      /* Memory mapped I/O port area */
++extern _X_EXPORT unsigned int IOPortBase;      /* Memory mapped I/O port area */
+ 
+ static __inline__ void
+ outb(unsigned PORT_SIZE port, unsigned char val)
+diff --git a/hw/xfree86/common/xf86AutoConfig.c b/hw/xfree86/common/xf86AutoConfig.c
+index 0f4f05d..b3c74a3 100644
+--- a/hw/xfree86/common/xf86AutoConfig.c
++++ b/hw/xfree86/common/xf86AutoConfig.c
+@@ -294,7 +294,7 @@ listPossibleVideoDrivers(XF86MatchedDrivers *md)
+     xf86PciMatchDriver(md);
+ #endif
+ 
+-#if defined(__linux__)
++#if defined(__linux__) && !defined(__ANDROID__)
+     xf86AddMatchedDriver(md, "modesetting");
+ #endif
+ 
+diff --git a/hw/xfree86/loader/loader.c b/hw/xfree86/loader/loader.c
+index 503c47e..bda3d64 100644
+--- a/hw/xfree86/loader/loader.c
++++ b/hw/xfree86/loader/loader.c
+@@ -64,16 +64,10 @@
+ #error i have no dynamic linker and i must scream
+ #endif
+ 
+-#ifndef XORG_NO_SDKSYMS
+-extern void *xorg_symbols[];
+-#endif
+ 
+ void
+ LoaderInit(void)
+ {
+-#ifndef XORG_NO_SDKSYMS
+-    LogMessageVerb(X_INFO, 2, "Loader magic: %p\n", (void *) xorg_symbols);
+-#endif
+     LogMessageVerb(X_INFO, 2, "Module ABI versions:\n");
+     LogWrite(2, "\t%s: %d.%d\n", ABI_CLASS_ANSIC,
+              GET_ABI_MAJOR(LoaderVersionInfo.ansicVersion),
+diff --git a/hw/xfree86/os-support/bsd/arm_video.c b/hw/xfree86/os-support/bsd/arm_video.c
+index dd1020e..180d705 100644
+--- a/hw/xfree86/os-support/bsd/arm_video.c
++++ b/hw/xfree86/os-support/bsd/arm_video.c
+@@ -65,6 +65,7 @@
+ #include "xf86Priv.h"
+ #include "xf86_OSlib.h"
+ #include "xf86OSpriv.h"
++#include "compiler.h"
+ 
+ #if defined(__NetBSD__) && !defined(MAP_FILE)
+ #define MAP_FLAGS MAP_SHARED
+@@ -162,6 +163,8 @@ xf86DisableIO()
+ 
+ #if defined(USE_ARC_MMAP) || defined(__arm32__)
+ 
++unsigned int IOPortBase;
++
+ Bool
+ xf86EnableIO()
+ {
+diff --git a/hw/xfree86/os-support/linux/lnx_acpi.c b/hw/xfree86/os-support/linux/lnx_acpi.c
+index dbd5afe..cf3d1a3 100644
+--- a/hw/xfree86/os-support/linux/lnx_acpi.c
++++ b/hw/xfree86/os-support/linux/lnx_acpi.c
+@@ -15,7 +15,7 @@
+ #include <fcntl.h>
+ #include <errno.h>
+ 
+-#define ACPI_SOCKET  "/var/run/acpid.socket"
++#define ACPI_SOCKET  "/data/data/com.termux/files/usr/var/run/acpid.socket"
+ 
+ #define ACPI_VIDEO_NOTIFY_SWITCH	0x80
+ #define ACPI_VIDEO_NOTIFY_PROBE		0x81
+diff --git a/hw/xfree86/os-support/linux/lnx_init.c b/hw/xfree86/os-support/linux/lnx_init.c
+index 011d8da..ca7acf4 100644
+--- a/hw/xfree86/os-support/linux/lnx_init.c
++++ b/hw/xfree86/os-support/linux/lnx_init.c
+@@ -250,27 +250,7 @@ xf86OpenConsole(void)
+                     ("xf86OpenConsole: VT_SETMODE VT_PROCESS failed: %s\n",
+                      strerror(errno));
+ 
+-            SYSCALL(ret = ioctl(xf86Info.consoleFd, KDSETMODE, KD_GRAPHICS));
+-            if (ret < 0)
+-                FatalError("xf86OpenConsole: KDSETMODE KD_GRAPHICS failed %s\n",
+-                           strerror(errno));
+-
+             tcgetattr(xf86Info.consoleFd, &tty_attr);
+-            SYSCALL(ioctl(xf86Info.consoleFd, KDGKBMODE, &tty_mode));
+-
+-            /* disable kernel special keys and buffering */
+-            SYSCALL(ret = ioctl(xf86Info.consoleFd, KDSKBMODE, K_OFF));
+-            if (ret < 0)
+-            {
+-                /* fine, just disable special keys */
+-                SYSCALL(ret = ioctl(xf86Info.consoleFd, KDSKBMODE, K_RAW));
+-                if (ret < 0)
+-                    FatalError("xf86OpenConsole: KDSKBMODE K_RAW failed %s\n",
+-                               strerror(errno));
+-
+-                /* ... and drain events, else the kernel gets angry */
+-                xf86SetConsoleHandler(drain_console, NULL);
+-            }
+ 
+             nTty = tty_attr;
+             nTty.c_iflag = (IGNPAR | IGNBRK) & (~PARMRK) & (~ISTRIP);
+@@ -313,12 +293,7 @@ xf86CloseConsole(void)
+     xf86SetConsoleHandler(NULL, NULL);
+ 
+     /* Back to text mode ... */
+-    SYSCALL(ret = ioctl(xf86Info.consoleFd, KDSETMODE, KD_TEXT));
+-    if (ret < 0)
+-        xf86Msg(X_WARNING, "xf86CloseConsole: KDSETMODE failed: %s\n",
+-                strerror(errno));
+ 
+-    SYSCALL(ioctl(xf86Info.consoleFd, KDSKBMODE, tty_mode));
+     tcsetattr(xf86Info.consoleFd, TCSANOW, &tty_attr);
+ 
+     SYSCALL(ret = ioctl(xf86Info.consoleFd, VT_GETMODE, &VT));
+diff --git a/hw/xfree86/os-support/linux/lnx_kmod.c b/hw/xfree86/os-support/linux/lnx_kmod.c
+index 6d12226..46cc7af 100644
+--- a/hw/xfree86/os-support/linux/lnx_kmod.c
++++ b/hw/xfree86/os-support/linux/lnx_kmod.c
+@@ -68,14 +68,6 @@ xf86LoadKernelModule(const char *modName)
+      */
+     switch (pid = fork()) {
+     case 0:                    /* child */
+-        /* change real/effective user ID to 0/0 as we need to
+-         * preinstall agpgart module for some DRM modules
+-         */
+-        if (setreuid(0, 0)) {
+-            xf86Msg(X_WARNING, "LoadKernelModule: "
+-                    "Setting of real/effective user Id to 0/0 failed");
+-        }
+-        setenv("PATH", "/sbin", 1);
+         execl(mpPath, "modprobe", modName, NULL);
+         xf86Msg(X_WARNING, "LoadKernelModule %s\n", strerror(errno));
+         exit(EXIT_FAILURE);     /* if we get here the child's exec failed */
+diff --git a/hw/xfree86/os-support/xf86_OSlib.h b/hw/xfree86/os-support/xf86_OSlib.h
+index 159c806..d7a6243 100644
+--- a/hw/xfree86/os-support/xf86_OSlib.h
++++ b/hw/xfree86/os-support/xf86_OSlib.h
+@@ -132,7 +132,6 @@
+ #if !defined(__sun)
+ #include <sys/at_ansi.h>
+ #endif
+-#include <sys/kd.h>
+ #include <sys/vt.h>
+ 
+ extern _X_HIDDEN void xf86VTAcquire(int);
+@@ -195,7 +194,6 @@ extern _X_HIDDEN char xf86SolarisFbDev[PATH_MAX];
+ #include <sys/mman.h>
+ #ifdef __linux__
+ #define HAS_USL_VTS
+-#include <sys/kd.h>
+ #include <sys/vt.h>
+ #define LDGMAP GIO_SCRNMAP
+ #define LDSMAP PIO_SCRNMAP
+diff --git a/hw/xfree86/parser/scan.c b/hw/xfree86/parser/scan.c
+index 1eb35ed..e7a4f43 100644
+--- a/hw/xfree86/parser/scan.c
++++ b/hw/xfree86/parser/scan.c
+@@ -873,13 +873,13 @@ xf86initConfigFiles(void)
+  */
+ 
+ #ifndef DEFAULT_CONF_PATH
+-#define DEFAULT_CONF_PATH	"/etc/X11/%S," \
++#define DEFAULT_CONF_PATH	"/data/data/com.termux/files/usr/etc/X11/%S," \
+ 							"%P/etc/X11/%S," \
+-							"/etc/X11/%G," \
++							"/data/data/com.termux/files/usr/etc/X11/%G," \
+ 							"%P/etc/X11/%G," \
+-							"/etc/X11/%X-%M," \
+-							"/etc/X11/%X," \
+-							"/etc/%X," \
++							"/data/data/com.termux/files/usr/etc/X11/%X-%M," \
++							"/data/data/com.termux/files/usr/etc/X11/%X," \
++							"/data/data/com.termux/files/usr/etc/%X," \
+ 							"%P/etc/X11/%X.%H," \
+ 							"%P/etc/X11/%X-%M," \
+ 							"%P/etc/X11/%X," \
+diff --git a/hw/xfree86/xorg-wrapper.c b/hw/xfree86/xorg-wrapper.c
+index c5e4a27..a016191 100644
+--- a/hw/xfree86/xorg-wrapper.c
++++ b/hw/xfree86/xorg-wrapper.c
+@@ -251,23 +251,6 @@ int main(int argc, char *argv[])
+     }
+ #endif
+ 
+-    /* If we've found cards, and all cards support kms, drop root rights */
+-    if (needs_root_rights == 0 || (total_cards && kms_cards == total_cards)) {
+-        gid_t realgid = getgid();
+-        uid_t realuid = getuid();
+-
+-        if (setresgid(-1, realgid, realgid) != 0) {
+-            fprintf(stderr, "%s: Could not drop setgid privileges: %s\n",
+-                progname, strerror(errno));
+-            exit(1);
+-        }
+-        if (setresuid(-1, realuid, realuid) != 0) {
+-            fprintf(stderr, "%s: Could not drop setuid privileges: %s\n",
+-                progname, strerror(errno));
+-            exit(1);
+-        }
+-    }
+-
+     snprintf(buf, sizeof(buf), "%s/Xorg", SUID_WRAPPER_DIR);
+ 
+     /* Check if the server is executable by our real uid */
+diff --git a/hw/xquartz/mach-startup/bundle-main.c b/hw/xquartz/mach-startup/bundle-main.c
+index 42530cb..b41db5b 100644
+--- a/hw/xquartz/mach-startup/bundle-main.c
++++ b/hw/xquartz/mach-startup/bundle-main.c
+@@ -74,7 +74,7 @@ extern int noPanoramiXExtension;
+ 
+ #define DEFAULT_CLIENT X11BINDIR "/xterm"
+ #define DEFAULT_STARTX X11BINDIR "/startx -- " X11BINDIR "/Xquartz"
+-#define DEFAULT_SHELL  "/bin/sh"
++#define DEFAULT_SHELL  "/data/data/com.termux/files/usr/bin/sh"
+ 
+ #ifndef BUILD_DATE
+ #define BUILD_DATE ""
+@@ -489,7 +489,7 @@ ensure_path(const char *dir)
+     temp = getenv("PATH");
+     if (temp == NULL || temp[0] == 0) {
+         snprintf(buf, sizeof(buf),
+-                 "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:%s",
++                 "/data/data/com.termux/files/usr/bin:/data/data/com.termux/files/usr/bin/applets:%s",
+                  dir);
+         setenv("PATH", buf, TRUE);
+     }
+diff --git a/hw/xwayland/xwayland-cursor.c b/hw/xwayland/xwayland-cursor.c
+index 66720bc..ec00294 100644
+--- a/hw/xwayland/xwayland-cursor.c
++++ b/hw/xwayland/xwayland-cursor.c
+@@ -66,7 +66,8 @@ xwl_realize_cursor(DeviceIntPtr device, ScreenPtr screen, CursorPtr cursor)
+     PixmapPtr pixmap;
+ 
+     pixmap = xwl_shm_create_pixmap(screen, cursor->bits->width,
+-                                   cursor->bits->height, 32, 0);
++                                   cursor->bits->height, 32,
++                                   CREATE_PIXMAP_USAGE_BACKING_PIXMAP);
+     dixSetPrivate(&cursor->devPrivates, &xwl_cursor_private_key, pixmap);
+ 
+     return TRUE;
+diff --git a/hw/xwayland/xwayland-glamor-gbm.c b/hw/xwayland/xwayland-glamor-gbm.c
+index b519492..ddaafd9 100644
+--- a/hw/xwayland/xwayland-glamor-gbm.c
++++ b/hw/xwayland/xwayland-glamor-gbm.c
+@@ -202,9 +202,9 @@ xwl_glamor_gbm_create_pixmap(ScreenPtr screen,
+     PixmapPtr pixmap = NULL;
+ 
+     if (width > 0 && height > 0 && depth >= 15 &&
+-        (hint == 0 ||
+-         hint == CREATE_PIXMAP_USAGE_BACKING_PIXMAP ||
+-         hint == CREATE_PIXMAP_USAGE_SHARED)) {
++        (hint == CREATE_PIXMAP_USAGE_BACKING_PIXMAP ||
++         hint == CREATE_PIXMAP_USAGE_SHARED ||
++         (xwl_screen->rootless && hint == 0))) {
+         uint32_t format = gbm_format_for_depth(depth);
+ 
+ #ifdef GBM_BO_WITH_MODIFIERS
+diff --git a/hw/xwayland/xwayland-output.c b/hw/xwayland/xwayland-output.c
+index ae646c6..efef56b 100644
+--- a/hw/xwayland/xwayland-output.c
++++ b/hw/xwayland/xwayland-output.c
+@@ -187,6 +187,9 @@ update_screen_size(struct xwl_output *xwl_output, int width, int height)
+     if (!xwl_screen->rootless && xwl_screen->screen->root)
+         update_backing_pixmaps (xwl_screen, width, height);
+ 
++    if (!xwl_screen->rootless && xwl_screen->screen->root)
++        update_backing_pixmaps (xwl_screen, width, height);
++
+     xwl_screen->width = width;
+     xwl_screen->height = height;
+     xwl_screen->screen->width = width;
+diff --git a/hw/xwayland/xwayland-shm.c b/hw/xwayland/xwayland-shm.c
+index 29732ea..e6bf7b5 100644
+--- a/hw/xwayland/xwayland-shm.c
++++ b/hw/xwayland/xwayland-shm.c
+@@ -40,12 +40,17 @@
+ #include <string.h>
+ #include <stdlib.h>
+ 
++#ifdef __ANDROID__
++#include "ashmem.h"
++#endif
++
+ struct xwl_pixmap {
+     struct wl_buffer *buffer;
+     void *data;
+     size_t size;
+ };
+ 
++#ifndef __ANDROID__
+ #ifndef HAVE_MKOSTEMP
+ static int
+ set_cloexec_or_close(int fd)
+@@ -172,6 +177,37 @@ os_create_anonymous_file(off_t size)
+     return fd;
+ }
+ 
++#else // __ANDROID__
++
++static int
++os_create_anonymous_file(off_t size) {
++	int fd, ret;
++    long flags;
++
++	fd = open("/dev/ashmem", O_RDWR);
++	if (fd < 0)
++		return fd;
++
++	ret = ioctl(fd, ASHMEM_SET_SIZE, size);
++	if (ret < 0)
++		goto err;
++
++    flags = fcntl(fd, F_GETFD);
++    if (flags == -1)
++        goto err;
++
++    if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == -1)
++        goto err;
++
++	return fd;
++
++err:
++	close(fd);
++	return ret;
++}
++
++#endif // __ANDROID__
++
+ static uint32_t
+ shm_format_for_depth(int depth)
+ {
+@@ -202,6 +238,7 @@ xwl_shm_create_pixmap(ScreenPtr screen,
+     int fd;
+ 
+     if (hint == CREATE_PIXMAP_USAGE_GLYPH_PICTURE ||
++        (!xwl_screen->rootless && hint != CREATE_PIXMAP_USAGE_BACKING_PIXMAP) ||
+         (width == 0 && height == 0) || depth < 15)
+         return fbCreatePixmap(screen, width, height, depth, hint);
+ 
+diff --git a/hw/xwin/InitOutput.c b/hw/xwin/InitOutput.c
+index 1c6fa9f..b3da3cf 100644
+--- a/hw/xwin/InitOutput.c
++++ b/hw/xwin/InitOutput.c
+@@ -294,7 +294,7 @@ winCheckMount(void)
+         level = none, curlevel;
+     BOOL binary = TRUE;
+ 
+-    mnt = setmntent("/etc/mtab", "r");
++    mnt = setmntent("/data/data/com.termux/files/usr/etc/mtab", "r");
+     if (mnt == NULL) {
+         ErrorF("setmntent failed");
+         return;
+@@ -303,7 +303,7 @@ winCheckMount(void)
+     while ((ent = getmntent(mnt)) != NULL) {
+         BOOL sys = (winCheckMntOpt(ent, "user") != NULL);
+         BOOL root = (strcmp(ent->mnt_dir, "/") == 0);
+-        BOOL tmp = (strcmp(ent->mnt_dir, "/tmp") == 0);
++        BOOL tmp = (strcmp(ent->mnt_dir, "/data/data/com.termux/files/usr/tmp") == 0);
+ 
+         if (sys) {
+             if (root)
+diff --git a/include/site.h b/include/site.h
+index 9bd8e2f..dea17ac 100644
+--- a/include/site.h
++++ b/include/site.h
+@@ -72,7 +72,7 @@ SOFTWARE.
+  * DO NOT CHANGE THESE VALUES OR THE DIX IMAKEFILE!
+  */
+ #ifndef COMPILEDDEFAULTFONTPATH
+-#define COMPILEDDEFAULTFONTPATH	"/usr/share/fonts/X11/misc/"
++#define COMPILEDDEFAULTFONTPATH	"/data/data/com.termux/files/usr/share/fonts/X11/misc/"
+ #endif
+ 
+ /*
+diff --git a/miext/sync/meson.build b/miext/sync/meson.build
+index 8b7ee4d..746c709 100644
+--- a/miext/sync/meson.build
++++ b/miext/sync/meson.build
+@@ -1,6 +1,7 @@
+ srcs_miext_sync = [
+     'misync.c',
+     'misyncfd.c',
++    'misyncshm.c',
+ ]
+ 
+ hdrs_miext_sync = [
+@@ -10,10 +11,6 @@ hdrs_miext_sync = [
+     'misyncstr.h',
+ ]
+ 
+-if build_dri3
+-    srcs_miext_sync += 'misyncshm.c'
+-endif
+-
+ libxserver_miext_sync = static_library('libxserver_miext_sync',
+     srcs_miext_sync,
+     include_directories: inc,
+diff --git a/os/access.c b/os/access.c
+index 9724616..33316a3 100644
+--- a/os/access.c
++++ b/os/access.c
+@@ -961,7 +961,7 @@ ResetHosts(const char *display)
+ #if defined WIN32 && defined __MINGW32__
+ #define ETC_HOST_PREFIX "X"
+ #else
+-#define ETC_HOST_PREFIX "/etc/X"
++#define ETC_HOST_PREFIX "/data/data/com.termux/files/usr/etc/X"
+ #endif
+ #define ETC_HOST_SUFFIX ".hosts"
+     fnamelen = strlen(ETC_HOST_PREFIX) + strlen(ETC_HOST_SUFFIX) +
+diff --git a/os/backtrace.c b/os/backtrace.c
+index 2aad0e3..ff11b83 100644
+--- a/os/backtrace.c
++++ b/os/backtrace.c
+@@ -247,14 +247,13 @@ xorg_backtrace_pstack(void)
+         /* CHILD */
+         char parent[16];
+ 
+-        seteuid(0);
+         close(STDIN_FILENO);
+         close(STDOUT_FILENO);
+         dup2(pipefd[1], STDOUT_FILENO);
+         closefrom(STDERR_FILENO);
+ 
+         snprintf(parent, sizeof(parent), "%d", getppid());
+-        execle("/usr/bin/pstack", "pstack", parent, NULL);
++        execle("/data/data/com.termux/files/usr/bin/pstack", "pstack", parent, NULL);
+         exit(1);
+     }
+     else {
+diff --git a/os/connection.c b/os/connection.c
+index 32d2cda..e0ef16a 100644
+--- a/os/connection.c
++++ b/os/connection.c
+@@ -1004,7 +1004,7 @@ ListenOnOpenFD(int fd, int noxauth)
+     XtransConnInfo ciptr;
+     const char *display_env = getenv("DISPLAY");
+ 
+-    if (display_env && (strncmp(display_env, "/tmp/launch", 11) == 0)) {
++    if (display_env && (strncmp(display_env, "/data/data/com.termux/files/usr/tmp/launch", 11) == 0)) {
+         /* Make the path the launchd socket if our DISPLAY is set right */
+         strcpy(port, display_env);
+     }
+diff --git a/os/osinit.c b/os/osinit.c
+index 8575319..bb14c6b 100644
+--- a/os/osinit.c
++++ b/os/osinit.c
+@@ -72,7 +72,7 @@ SOFTWARE.
+ #endif
+ 
+ #ifndef ADMPATH
+-#define ADMPATH "/usr/adm/X%smsgs"
++#define ADMPATH "/data/data/com.termux/files/usr/adm/X%smsgs"
+ #endif
+ 
+ #ifdef RLIMIT_DATA
+diff --git a/os/utils.c b/os/utils.c
+index 2ba1c80..06a9957 100644
+--- a/os/utils.c
++++ b/os/utils.c
+@@ -228,7 +228,7 @@ OsSignal(int sig, OsSigHandlerPtr handler)
+  * server at a time.  This keeps the servers from stomping on each other
+  * if the user forgets to give them different display numbers.
+  */
+-#define LOCK_DIR "/tmp"
++#define LOCK_DIR "/data/data/com.termux/files/usr/tmp"
+ #define LOCK_TMP_PREFIX "/.tX"
+ #define LOCK_PREFIX "/.X"
+ #define LOCK_SUFFIX "-lock"
+@@ -320,7 +320,7 @@ LockServer(void)
+     i = 0;
+     haslock = 0;
+     while ((!haslock) && (i++ < 3)) {
+-        haslock = (link(tmp, LockFile) == 0);
++        haslock = (rename(tmp, LockFile) == 0);
+         if (haslock) {
+             /*
+              * We're done.
+@@ -1384,11 +1384,7 @@ System(const char *command)
+         p = -1;
+         break;
+     case 0:                    /* child */
+-        if (setgid(getgid()) == -1)
+-            _exit(127);
+-        if (setuid(getuid()) == -1)
+-            _exit(127);
+-        execl("/bin/sh", "sh", "-c", command, (char *) NULL);
++        execl("/data/data/com.termux/files/usr/bin/sh", "sh", "-c", command, (char *) NULL);
+         _exit(127);
+     default:                   /* parent */
+         do {
+@@ -1454,10 +1450,6 @@ Popen(const char *command, const char *type)
+ #endif
+         return NULL;
+     case 0:                    /* child */
+-        if (setgid(getgid()) == -1)
+-            _exit(127);
+-        if (setuid(getuid()) == -1)
+-            _exit(127);
+         if (*type == 'r') {
+             if (pdes[1] != 1) {
+                 /* stdout */
+@@ -1474,7 +1466,7 @@ Popen(const char *command, const char *type)
+             }
+             close(pdes[1]);
+         }
+-        execl("/bin/sh", "sh", "-c", command, (char *) NULL);
++        execl("/data/data/com.termux/files/usr/bin/sh", "sh", "-c", command, (char *) NULL);
+         _exit(127);
+     }
+ 
+@@ -1532,10 +1524,6 @@ Fopen(const char *file, const char *type)
+         free(cur);
+         return NULL;
+     case 0:                    /* child */
+-        if (setgid(getgid()) == -1)
+-            _exit(127);
+-        if (setuid(getuid()) == -1)
+-            _exit(127);
+         if (*type == 'r') {
+             if (pdes[1] != 1) {
+                 /* stdout */
+@@ -1578,20 +1566,7 @@ Fopen(const char *file, const char *type)
+ 
+     return iop;
+ #else
+-    int ruid, euid;
+-
+-    ruid = getuid();
+-    euid = geteuid();
+-
+-    if (seteuid(ruid) == -1) {
+-        return NULL;
+-    }
+     iop = fopen(file, type);
+-
+-    if (seteuid(euid) == -1) {
+-        fclose(iop);
+-        return NULL;
+-    }
+     return iop;
+ #endif                          /* HAS_SAVED_IDS_AND_SETEUID */
+ }
+@@ -1671,7 +1646,7 @@ Win32TempDir(void)
+     else if (getenv("TMP") != NULL)
+         return getenv("TMP");
+     else
+-        return "/tmp";
++        return "/data/data/com.termux/files/usr/tmp";
+ }
+ 
+ int
+@@ -1723,64 +1698,7 @@ System(const char *cmdline)
+ Bool
+ PrivsElevated(void)
+ {
+-    static Bool privsTested = FALSE;
+-    static Bool privsElevated = TRUE;
+-
+-    if (!privsTested) {
+-#if defined(WIN32)
+-        privsElevated = FALSE;
+-#else
+-        if ((getuid() != geteuid()) || (getgid() != getegid())) {
+-            privsElevated = TRUE;
+-        }
+-        else {
+-#if defined(HAVE_ISSETUGID)
+-            privsElevated = issetugid();
+-#elif defined(HAVE_GETRESUID)
+-            uid_t ruid, euid, suid;
+-            gid_t rgid, egid, sgid;
+-
+-            if ((getresuid(&ruid, &euid, &suid) == 0) &&
+-                (getresgid(&rgid, &egid, &sgid) == 0)) {
+-                privsElevated = (euid != suid) || (egid != sgid);
+-            }
+-            else {
+-                printf("Failed getresuid or getresgid");
+-                /* Something went wrong, make defensive assumption */
+-                privsElevated = TRUE;
+-            }
+-#else
+-            if (getuid() == 0) {
+-                /* running as root: uid==euid==0 */
+-                privsElevated = FALSE;
+-            }
+-            else {
+-                /*
+-                 * If there are saved ID's the process might still be privileged
+-                 * even though the above test succeeded. If issetugid() and
+-                 * getresgid() aren't available, test this by trying to set
+-                 * euid to 0.
+-                 */
+-                unsigned int oldeuid;
+-
+-                oldeuid = geteuid();
+-
+-                if (seteuid(0) != 0) {
+-                    privsElevated = FALSE;
+-                }
+-                else {
+-                    if (seteuid(oldeuid) != 0) {
+-                        FatalError("Failed to drop privileges.  Exiting\n");
+-                    }
+-                    privsElevated = TRUE;
+-                }
+-            }
+-#endif
+-        }
+-#endif
+-        privsTested = TRUE;
+-    }
+-    return privsElevated;
++    return FALSE;
+ }
+ 
+ /*
+diff --git a/test/xtest.c b/test/xtest.c
+index fc5e433..d7e6620 100644
+--- a/test/xtest.c
++++ b/test/xtest.c
+@@ -61,7 +61,7 @@ xtest_init_devices(void)
+ {
+     ScreenRec screen = {0};
+     ClientRec server_client = {0};
+-    WindowRec root = {0};
++    WindowRec root = {{0}};
+     WindowOptRec optional = {0};
+ 
+     /* random stuff that needs initialization */
+diff --git a/xkb/ddxLoad.c b/xkb/ddxLoad.c
+index a8b8368..9ac78cc 100644
+--- a/xkb/ddxLoad.c
++++ b/xkb/ddxLoad.c
+@@ -76,8 +76,8 @@ OutputDirectory(char *outdir, size_t size)
+     }
+     else
+ #endif
+-    if (strlen("/tmp/") < size) {
+-        (void) strcpy(outdir, "/tmp/");
++    if (strlen("/data/data/com.termux/files/usr/tmp/") < size) {
++        (void) strcpy(outdir, "/data/data/com.termux/files/usr/tmp/");
+     }
+ }
+ 
+--- /dev/null	2021-12-20 22:38:19.660000000 +0530
++++ ./hw/xwayland/ashmem.h	2021-12-22 19:55:12.324060367 +0530
+@@ -0,0 +1,47 @@
++/****************************************************************************
++ ****************************************************************************
++ ***
++ ***   This header was automatically generated from a Linux kernel header
++ ***   of the same name, to make information necessary for userspace to
++ ***   call into the kernel available to libc.  It contains only constants,
++ ***   structures, and macros generated from the original header, and thus,
++ ***   contains no copyrightable information.
++ ***
++ ****************************************************************************
++ ****************************************************************************/
++#ifndef _LINUX_ASHMEM_H
++#define _LINUX_ASHMEM_H
++
++#include <linux/limits.h>
++#include <linux/ioctl.h>
++#include <stdint.h>
++
++#define ASHMEM_NAME_LEN 256
++
++#define ASHMEM_NAME_DEF "dev/ashmem"
++
++#define ASHMEM_NOT_PURGED 0
++#define ASHMEM_WAS_PURGED 1
++
++#define ASHMEM_IS_UNPINNED 0
++#define ASHMEM_IS_PINNED 1
++
++struct ashmem_pin {
++ uint32_t offset;
++ uint32_t len;
++};
++
++#define __ASHMEMIOC 0x77
++
++#define ASHMEM_SET_NAME _IOW(__ASHMEMIOC, 1, char[ASHMEM_NAME_LEN])
++#define ASHMEM_GET_NAME _IOR(__ASHMEMIOC, 2, char[ASHMEM_NAME_LEN])
++#define ASHMEM_SET_SIZE _IOW(__ASHMEMIOC, 3, size_t)
++#define ASHMEM_GET_SIZE _IO(__ASHMEMIOC, 4)
++#define ASHMEM_SET_PROT_MASK _IOW(__ASHMEMIOC, 5, unsigned long)
++#define ASHMEM_GET_PROT_MASK _IO(__ASHMEMIOC, 6)
++#define ASHMEM_PIN _IOW(__ASHMEMIOC, 7, struct ashmem_pin)
++#define ASHMEM_UNPIN _IOW(__ASHMEMIOC, 8, struct ashmem_pin)
++#define ASHMEM_GET_PIN_STATUS _IO(__ASHMEMIOC, 9)
++#define ASHMEM_PURGE_ALL_CACHES _IO(__ASHMEMIOC, 10)
++
++#endif
