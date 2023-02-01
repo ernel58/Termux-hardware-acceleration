@@ -1,0 +1,146 @@
+diff --git a/bin/install_megadrivers.py b/bin/install_megadrivers.py
+index 60ee457..298e8ac 100644
+--- a/bin/install_megadrivers.py
++++ b/bin/install_megadrivers.py
+@@ -23,7 +23,13 @@
+ """Script to install megadriver symlinks for meson."""
+ 
+ import argparse
+-import os
++import os, shutil
++def link(src, dest):
++ shutil.copyfile(src, dest)
++def unlink(src):
++ os.remove(src)
++os.link = link
++os.unlink = unlink
+ 
+ 
+ def main():
+diff --git a/src/egl/main/egldisplay.h b/src/egl/main/egldisplay.h
+index 0ee06a4..94584f3 100644
+--- a/src/egl/main/egldisplay.h
++++ b/src/egl/main/egldisplay.h
+@@ -37,7 +37,7 @@
+ #include "egltypedefs.h"
+ #include "egldefines.h"
+ #include "eglarray.h"
+-
++#include "X11/Xlib.h"
+ 
+ #ifdef __cplusplus
+ extern "C" {
+diff --git a/src/gallium/drivers/zink/zink_draw.cpp b/src/gallium/drivers/zink/zink_draw.cpp
+index ddd2e5e..b8d9295 100644
+--- a/src/gallium/drivers/zink/zink_draw.cpp
++++ b/src/gallium/drivers/zink/zink_draw.cpp
+@@ -504,6 +504,17 @@ zink_draw(struct pipe_context *pctx,
+       zink_rebind_all_buffers(ctx);
+    }
+ 
++   if (!zink_screen(pctx->screen)->info.have_EXT_extended_dynamic_state) {
++      for (unsigned i = 0; i < ctx->element_state->hw_state.num_bindings; i++) {
++         unsigned binding = ctx->element_state->binding_map[i];
++         const struct pipe_vertex_buffer *vb = ctx->vertex_buffers + binding;
++         if (ctx->gfx_pipeline_state.bindings[i].stride != vb->stride) {
++            ctx->gfx_pipeline_state.bindings[i].stride = vb->stride;
++            ctx->gfx_pipeline_state.dirty = true;
++         }
++      }
++   }
++
+    unsigned index_offset = 0;
+    unsigned index_size = dinfo->index_size;
+    struct pipe_resource *index_buffer = NULL;
+diff --git a/src/gallium/drivers/zink/zink_pipeline.c b/src/gallium/drivers/zink/zink_pipeline.c
+index 0fceb9e..a1a6a2f 100644
+--- a/src/gallium/drivers/zink/zink_pipeline.c
++++ b/src/gallium/drivers/zink/zink_pipeline.c
+@@ -57,7 +57,7 @@ zink_create_gfx_pipeline(struct zink_screen *screen,
+    if (!screen->info.have_EXT_vertex_input_dynamic_state || !state->element_state->num_attribs) {
+       memset(&vertex_input_state, 0, sizeof(vertex_input_state));
+       vertex_input_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+-      vertex_input_state.pVertexBindingDescriptions = state->element_state->b.bindings;
++      vertex_input_state.pVertexBindingDescriptions = state->bindings;
+       vertex_input_state.vertexBindingDescriptionCount = state->element_state->num_bindings;
+       vertex_input_state.pVertexAttributeDescriptions = state->element_state->attribs;
+       vertex_input_state.vertexAttributeDescriptionCount = state->element_state->num_attribs;
+diff --git a/src/gallium/drivers/zink/zink_pipeline.h b/src/gallium/drivers/zink/zink_pipeline.h
+index b3acb61..a905527 100644
+--- a/src/gallium/drivers/zink/zink_pipeline.h
++++ b/src/gallium/drivers/zink/zink_pipeline.h
+@@ -66,10 +66,14 @@ struct zink_gfx_pipeline_state {
+    bool modules_changed;
+ 
+    struct zink_vertex_elements_hw_state *element_state;
++   uint8_t divisors_present;
+    uint32_t vertex_hash;
+ 
+    uint32_t final_hash;
+ 
++   VkVertexInputBindingDivisorDescriptionEXT divisors[PIPE_MAX_ATTRIBS];
++   VkVertexInputBindingDescription bindings[PIPE_MAX_ATTRIBS]; // combination of element_state and stride
++
+    uint32_t vertex_buffers_enabled_mask;
+    uint32_t vertex_strides[PIPE_MAX_ATTRIBS];
+    bool sample_locations_enabled;
+diff --git a/src/gallium/drivers/zink/zink_screen.h b/src/gallium/drivers/zink/zink_screen.h
+index b93673e..064e4a3 100644
+--- a/src/gallium/drivers/zink/zink_screen.h
++++ b/src/gallium/drivers/zink/zink_screen.h
+@@ -40,7 +40,7 @@
+ #include "util/u_vertex_state_cache.h"
+ #include "pipebuffer/pb_cache.h"
+ #include "pipebuffer/pb_slab.h"
+-#include <vulkan/vulkan.h>
++#include <vulkan/vulkan_android.h>
+ 
+ extern uint32_t zink_debug;
+ struct hash_table;
+diff --git a/src/gallium/drivers/zink/zink_state.c b/src/gallium/drivers/zink/zink_state.c
+index 40feb9b..1d77338 100644
+--- a/src/gallium/drivers/zink/zink_state.c
++++ b/src/gallium/drivers/zink/zink_state.c
+@@ -222,10 +222,19 @@ zink_bind_vertex_elements_state(struct pipe_context *pctx,
+          key->size += 2 * size;
+       }
+       state->element_state = &ctx->element_state->hw_state;
+-   } else {
+-     state->element_state = NULL;
++      struct zink_vertex_elements_state *ves = cso;
++      for (int i = 0; i < state->element_state->num_bindings; ++i) {
++         state->bindings[i].binding = ves->bindings[i].binding;
++         state->bindings[i].inputRate = ves->bindings[i].inputRate;
++         if (ves->divisor[i]) {
++            state->divisors[state->divisors_present].divisor = ves->divisor[i];
++            state->divisors[state->divisors_present].binding = state->bindings[i].binding;
++            state->divisors_present++;
++         }
++      }
++   } else
++      state->element_state = NULL;
+      ctx->vertex_buffers_dirty = false;
+-   }
+ }
+ 
+ static void
+diff --git a/src/vulkan/wsi/wsi_common_display.c b/src/vulkan/wsi/wsi_common_display.c
+index d933b7f..ada7f11 100644
+--- a/src/vulkan/wsi/wsi_common_display.c
++++ b/src/vulkan/wsi/wsi_common_display.c
+@@ -1267,7 +1267,6 @@ wsi_display_wait_thread(void *data)
+       .events = POLLIN
+    };
+ 
+-   pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+    for (;;) {
+       int ret = poll(&pollfd, 1, -1);
+       if (ret > 0) {
+@@ -1297,7 +1296,6 @@ wsi_display_stop_wait_thread(struct wsi_display *wsi)
+ {
+    pthread_mutex_lock(&wsi->wait_mutex);
+    if (wsi->wait_thread) {
+-      pthread_cancel(wsi->wait_thread);
+       pthread_join(wsi->wait_thread, NULL);
+       wsi->wait_thread = 0;
+    }
