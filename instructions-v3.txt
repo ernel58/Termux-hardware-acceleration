@@ -1,0 +1,111 @@
+# Notice  I copied something inside suhan-paradkar's instructions-v2,eNB256's instruction,and also termux's official build options
+#So its just an article collection
+
+#EDIT TIME=2023-2-1
+
+#Firstly solve the dependency problem
+
+apt install x11-repo -y
+
+apt install clang lld cmake autoconf automake libtool binutils '*ndk*' make python git libandroid-shmem-static 'vulkan*' ninja llvm bison flex libx11 libdrm libpixman libxfixes libjpeg-turbo xtrans libxxf86vm xorg-xrandr xorg-font-util xorg-util-macros libxfont2 libxkbfile libpciaccess xcb-util-renderutil xcb-util-image xcb-util-keysyms xcb-util-wm xorg-xkbcomp xkeyboard-config libxdamage libxinerama libepoxy xwayland libwayland libwayland-protocols xorg* virglrenderer -y
+apt remove xorg*static -y
+pip install meson mako
+
+#Collect the git repos
+
+cd ~
+mkdir builds ; cd builds
+git clone -b xorgproto-2022.2 --depth 1 https://gitlab.freedesktop.org/xorg/proto/xorgproto.git
+git clone -b 1.21.0 --depth 1 https://gitlab.freedesktop.org/wayland/wayland.git
+git clone --depth 1 -b 1.31 https://gitlab.freedesktop.org/wayland/wayland-protocols.git
+git clone --depth 1 -b libxshmfence-1.3.2 https://gitlab.freedesktop.org/xorg/lib/libxshmfence.git
+git clone --depth 1 -b mesa-22.0.5 https://gitlab.freedesktop.org/mesa/mesa.git
+git clone --depth 1 https://github.com/dottedmag/libsha1.git
+wget https://github.com/anholt/libepoxy/archive/refs/tags/1.5.10.tar.gz
+git clone --depth 1 https://gitlab.freedesktop.org/xorg/xserver.git -b xorg-server-1.20.14 xorg-server-1.20.14
+wget https://dri.freedesktop.org/libdrm/libdrm-2.4.114.tar.xz
+git clone https://gitlab.freedesktop.org/virgl/virglrenderer.git -b virglrenderer-0.9.0 --depth 1
+
+#Build <Notice if ninja reports some file cannot be overwrite please remove the file that caused the problem>
+
+#1 xorgproto
+
+cd xorgproto*
+./autogen.sh --prefix=$PREFIX --with-xmlto=no --with-fop=no --with-xsltproc=no
+make -j8 install
+
+#2 libwayland
+
+cd ../wayland*
+mkdir b ; cd b
+meson -Dprefix=$PREFIX -Ddocumentation=false ..
+ninja -j8 install
+
+#3 wayland-protocols
+
+cd ../../*protocols
+mkdir b
+cd b
+meson -Dprefix=$PREFIX ..
+ninja -j8 install
+
+#4 libxshmfence
+
+cd ../../libxshm*
+./autogen.sh --prefix=$PREFIX --with-shared-memory-dir=$TMPDIR
+sed -i s/values.h/limits.h/ ./src/xshmfence_futex.h
+make -j8 install CPPFLAGS=-DMAXINT=INT_MAX
+
+#5 libdrm
+
+cd ~/builds
+tar xJf *xz
+rm *xz
+cd libdrm*
+mkdir b
+cd b
+meson -Dprefix=$PREFIX -Dintel=disabled -Dradeon=disabled -Damdgpu=disabled -Dnouveau=disabled -Dvmwgfx=disabled -Dvc4=disabled ..
+ninja -j8 install
+
+#6 mesa
+
+cd ~/builds/mesa
+mkdir b
+cd b
+*apply patches*
+LDFLAGS='-l:libandroid-shmem.a -llog -latomic' meson .. -Dprefix=$PREFIX -Dplatforms=x11 -Degl-native-platform=x11 -Ddri3=true -Dshader-cache=true -Dshader-cache-max-size=8G -Dshared-glapi=true -Dgles1=true -Dgles2=true -Dglx=dri -Degl=true -Dllvm=false -Dglx-direct=true -Dgbm=enabled -Ddri-drivers='' -Dgallium-drivers=zink,swrast,virgl -Ddraw-use-llvm=true -Dshared-llvm=true -Dvulkan-drivers='' -Dcpp_rtti=false -Dc_args=-Wno-error=incompatible-function-pointer-types -Dbuildtype=release -Dgallium-vdpau=false -Dgallium-xvmc=false -Dgallium-omx=disabled -Dgallium-va=false -Dgallium-xa=false -Dopencl-native=false -Dmicrosoft-clc=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dlmsensors=disabled -Dpower8=disabled -Dosmesa=true
+ninja -j8 install
+
+#7 libepoxy
+
+cd ~/builds
+tar xzf 1.5*
+rm *gz
+cd libepoxy*
+mkdir b
+cd b
+meson -Dprefix=$PREFIX -Degl=yes -Dglx=yes -Dx11=true -Dtests=false -Dc_args=-U__ANDROID__ -Dbuildtype=release ..
+ninja -j8 install
+
+#8 X-server
+
+cd ~/builds
+cd xorg*
+*apply patches*
+./autogen.sh --enable-mitshm --enable-xcsecurity --enable-xf86bigfont --enable-xwayland --enable-xorg --enable-xnest --enable-xvfb --disable-xwin --enable-xephyr --enable-kdrive --disable-devel-docs --disable-config-hal --disable-config-udev --disable-unit-tests --disable-selective-werror --disable-static --without-dtrace --disable-glamor --enable-dri --enable-dri2 --enable-dri3 --enable-glx --with-sha1=libsha1 --with-pic --prefix=$PREFIX
+make install -j4 LDFLAGS=' -fuse-ld=lld /data/data/com.termux/files/usr/lib/libandroid-shmem.a -llog'
+
+#9 virglrenderer
+
+cd ~/builds
+cd virgl*
+*apply patch*
+sed -i 's+"/tmp+"/data/data/com.termux/files/usr/tmp+' vtest/vtest_protocol.h
+mkdir b
+cd b
+meson -Dbuildtype=release -Dprefix=$PREFIX -Dplatforms=egl,glx ..
+ninja -j8 install
+
+
+#Lock the packages that we have built
+apt-mark hold libdrm libepoxy libglvnd libwayland libwayland-protocols libxshmfence mesa mesa-dev osmesa virglrenderer vulkan-headers vulkan-tools xorg-font-util xorg-iceauth xorg-util-macros xorg-xauth xorg-xrdb xorgproto
